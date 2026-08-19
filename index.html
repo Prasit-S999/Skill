@@ -43,7 +43,8 @@
   }
   .eyebrow{font-size:13px; font-weight:600; letter-spacing:.08em; color:var(--coral-deep); text-transform:uppercase; margin:0;}
   .sidebar-title{font-family:"Kanit",sans-serif; font-size:34px; font-weight:700; margin:2px 0 0; color:#000000; line-height:1.1; letter-spacing:-.01em;}
-  .emp-list{padding:6px 14px 18px; max-height:calc(100vh - 120px); overflow-y:auto;}
+  .emp-list{padding:6px 14px 18px; max-height:42vh; overflow-y:auto;}
+  @media(min-width:768px){ .emp-list{max-height:calc(100vh - 120px);} }
   .emp-item{
     width:100%; display:flex; align-items:center; gap:11px; padding:10px 12px;
     border:1.5px solid transparent; border-radius:8px;
@@ -158,7 +159,7 @@
         <div class="section-label-row">
           <p class="section-label"><span class="dot" style="background:var(--coral);"></span>ขีดความสามารถโดยรวม</p>
           <div class="score-badge">
-            <div class="score-circle" id="avgNum">0/0</div>
+            <div class="score-circle" id="avgNum">0/100</div>
             <div class="score-text">คะแนนรวมทุกหัวข้อ<span id="levelLabel"></span></div>
           </div>
         </div>
@@ -221,6 +222,8 @@ const fallbackData = [
   }
 ];
 
+const STORAGE_KEY = "electricalSkillProfileData";
+
 function normalizeEmployees(list){
   if (!Array.isArray(list)) return [];
   return list.map(emp => ({
@@ -240,15 +243,31 @@ function normalizeEmployees(list){
   }));
 }
 
-async function loadData(){
+function loadFromLocalStorage(){
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed) && parsed.length > 0) return normalizeEmployees(parsed);
+    return null;
+  } catch (err) {
+    console.error("โหลดข้อมูลที่บันทึกไว้ไม่สำเร็จ:", err);
+    return null;
+  }
+}
+
+async function loadFromDataJson(){
   try {
     const res = await fetch("data.json", { cache: "no-store" });
     if (!res.ok) throw new Error("ไม่สามารถโหลดไฟล์ data.json ได้");
     const parsed = await res.json();
-    return normalizeEmployees(parsed);
+    if (Array.isArray(parsed) && parsed.length > 0) {
+      return normalizeEmployees(parsed);
+    }
+    return null;
   } catch (err) {
-    console.warn("ใช้ข้อมูลสำรองแทนเนื่องจาก:", err);
-    return normalizeEmployees(fallbackData);
+    console.warn("โหลด data.json ไม่สำเร็จ:", err);
+    return null;
   }
 }
 
@@ -265,7 +284,13 @@ function getSortedEmployees(){
 }
 
 async function init(){
-  employees = await loadData();
+  const local = loadFromLocalStorage();
+  if (local) {
+    employees = local;
+  } else {
+    const fromJson = await loadFromDataJson();
+    employees = fromJson || normalizeEmployees(fallbackData);
+  }
   const sorted = getSortedEmployees();
   if (sorted.length > 0) {
     selectedId = sorted[0].id;
@@ -273,9 +298,28 @@ async function init(){
   renderAll();
 }
 
+function syncDataFromStorage(){
+  const local = loadFromLocalStorage();
+  if (local) {
+    employees = local;
+    if (!employees.some(e => e.id === selectedId) && employees.length > 0) {
+      selectedId = employees[0].id;
+    }
+    renderAll();
+  }
+}
+
+window.addEventListener("storage", syncDataFromStorage);
+window.addEventListener("focus", syncDataFromStorage);
+
 function getEmployee(){ return employees.find(e => e.id === selectedId); }
 function scoreSumOf(emp){ return (emp.competencies || []).reduce((s,c)=>s+Number(c.score), 0); }
 function maxSumOf(emp){ return (emp.competencies || []).reduce((s,c)=>s+(Number(c.max) || 10), 0); }
+function totalScore100Of(emp){
+  const sSum = scoreSumOf(emp);
+  const mSum = maxSumOf(emp);
+  return mSum > 0 ? Math.round((sSum / mSum) * 100) : 0;
+}
 
 function initials(name){
   const parts = name.trim().split(" ");
@@ -308,8 +352,7 @@ function renderSidebar(){
   const sorted = getSortedEmployees();
   sorted.forEach((emp, idx) => {
     const active = emp.id === selectedId;
-    const scoreSum = scoreSumOf(emp);
-    const maxSum = maxSumOf(emp);
+    const total100 = totalScore100Of(emp);
     const c = colorFor(idx);
     const item = document.createElement("button");
     item.className = "emp-item" + (active ? " active" : "");
@@ -321,7 +364,7 @@ function renderSidebar(){
         <p class="emp-name">${escapeHtml(emp.name)}</p>
         <p class="emp-pos">${escapeHtml(emp.nickname)}</p>
       </div>
-      <span class="emp-avg">${scoreSum}/${maxSum}</span>
+      <span class="emp-avg">${total100}/100</span>
     `;
     item.onclick = () => { selectedId = emp.id; renderAll(); };
     list.appendChild(item);
@@ -351,7 +394,8 @@ function renderChart(){
   if (!emp) return;
   const scoreSum = scoreSumOf(emp);
   const maxSum = maxSumOf(emp);
-  document.getElementById("avgNum").textContent = `${scoreSum}/${maxSum}`;
+  const total100 = totalScore100Of(emp);
+  document.getElementById("avgNum").textContent = `${total100}/100`;
   document.getElementById("levelLabel").textContent = levelLabel(scoreSum, maxSum);
 
   const svg = document.getElementById("radarSvg");
