@@ -257,18 +257,22 @@ function loadFromLocalStorage(){
 }
 
 async function loadFromDataJson(){
-  try {
-    const res = await fetch("data.json", { cache: "no-store" });
-    if (!res.ok) throw new Error("ไม่สามารถโหลดไฟล์ data.json ได้");
-    const parsed = await res.json();
-    if (Array.isArray(parsed) && parsed.length > 0) {
-      return normalizeEmployees(parsed);
+  const paths = ["./data.json?v=" + Date.now(), "data.json?v=" + Date.now(), "./data.json", "data.json"];
+  for (const p of paths) {
+    try {
+      const res = await fetch(p);
+      if (res.ok) {
+        const parsed = await res.json();
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          console.log("ดึงข้อมูลจาก data.json สำเร็จ:", parsed.length, "คน");
+          return normalizeEmployees(parsed);
+        }
+      }
+    } catch (err) {
+      console.warn("ลองดึงข้อมูลจาก " + p + " ไม่สำเร็จ:", err);
     }
-    return null;
-  } catch (err) {
-    console.warn("โหลด data.json ไม่สำเร็จ:", err);
-    return null;
   }
+  return null;
 }
 
 let employees = [];
