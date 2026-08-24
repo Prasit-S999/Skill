@@ -123,6 +123,24 @@
     background:#fffefb; line-height:1.6; white-space:pre-wrap;
   }
   .remark-empty{color:#a9a9b8; font-style:italic;}
+  .level-switcher-wrap{padding:4px 22px 14px;}
+  .level-switcher{
+    display:flex; background:#f1eee3; border:1.5px solid var(--ink);
+    border-radius:8px; padding:3px; gap:4px; box-shadow:2px 2px 0 var(--ink);
+  }
+  .level-btn{
+    flex:1; border:none; background:transparent; padding:7px 10px; border-radius:6px;
+    font-family:"Kanit", sans-serif; font-size:15px; font-weight:600; color:var(--ink);
+    cursor:pointer; transition:all .15s ease; display:flex; align-items:center; justify-content:center; gap:6px;
+  }
+  .level-btn:hover{background:rgba(230,48,44,0.08);}
+  .level-btn.active{background:var(--coral); color:#ffffff; box-shadow:1px 1px 0 var(--ink);}
+  .level-badge{
+    font-size:11.5px; padding:1px 7px; border-radius:10px; background:rgba(0,0,0,0.08);
+    font-family:"Sarabun", sans-serif; font-weight:700;
+  }
+  .level-btn.active .level-badge{background:rgba(255,255,255,0.25); color:#fff;}
+  .empty-state{padding:30px 20px; text-align:center; color:#888; font-size:15px;}
   .hidden{display:none !important;}
 </style>
 </head>
@@ -137,6 +155,9 @@
       </div>
       <h1 class="sidebar-title">ทักษะพนักงาน</h1>
     </div>
+    <div class="level-switcher-wrap">
+      <div class="level-switcher" id="levelSwitcher"></div>
+    </div>
     <nav class="emp-list" id="empList"></nav>
   </aside>
 
@@ -145,7 +166,7 @@
       <div class="profile-left">
         <div class="photo-wrap">
           <img id="photoImg" class="photo hidden" alt="">
-          <div id="photoFallback" class="photo-fallback">&#128100;</div>
+          <div id="photoFallback" class="photo-fallback hidden">&#128100;</div>
         </div>
         <div>
           <h2 class="name-title" id="nameView"></h2>
@@ -223,11 +244,36 @@ const fallbackData = [
 ];
 
 const STORAGE_KEY = "electricalSkillProfileData";
+const DEFAULT_LEVELS = [
+  { id: "TM", name: "TM" },
+  { id: "TL", name: "TL" }
+];
 
-function normalizeEmployees(list){
-  if (!Array.isArray(list)) return [];
-  return list.map(emp => ({
+let levels = [...DEFAULT_LEVELS];
+let employees = [];
+let selectedId = null;
+let currentLevel = "TM";
+
+function normalizeData(raw) {
+  let parsedLevels = [...DEFAULT_LEVELS];
+  let rawList = [];
+  if (Array.isArray(raw)) {
+    rawList = raw;
+  } else if (raw && typeof raw === "object") {
+    if (Array.isArray(raw.levels) && raw.levels.length > 0) {
+      parsedLevels = raw.levels.map(l => ({
+        id: l.id || "TM",
+        name: l.name || l.id || "TM"
+      }));
+    }
+    if (Array.isArray(raw.employees)) {
+      rawList = raw.employees;
+    }
+  }
+
+  const parsedEmployees = rawList.map(emp => ({
     id: emp.id || Math.random().toString(36).slice(2, 9),
+    level: emp.level || "TM",
     name: emp.name || "พนักงาน",
     nickname: emp.nickname || "",
     photo: emp.photo || null,
@@ -241,15 +287,15 @@ function normalizeEmployees(list){
         }))
       : []
   }));
+
+  return { levels: parsedLevels, employees: parsedEmployees };
 }
 
 function loadFromLocalStorage(){
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed) && parsed.length > 0) return normalizeEmployees(parsed);
-    return null;
+    return normalizeData(JSON.parse(raw));
   } catch (err) {
     console.error("โหลดข้อมูลที่บันทึกไว้ไม่สำเร็จ:", err);
     return null;
@@ -263,9 +309,9 @@ async function loadFromDataJson(){
       const res = await fetch(p);
       if (res.ok) {
         const parsed = await res.json();
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          console.log("ดึงข้อมูลจาก data.json สำเร็จ:", parsed.length, "คน");
-          return normalizeEmployees(parsed);
+        const norm = normalizeData(parsed);
+        if (norm.employees.length > 0) {
+          return norm;
         }
       }
     } catch (err) {
@@ -275,11 +321,9 @@ async function loadFromDataJson(){
   return null;
 }
 
-let employees = [];
-let selectedId = null;
-
 function getSortedEmployees(){
-  return [...employees].sort((a, b) => {
+  const filtered = employees.filter(e => (e.level || "TM") === currentLevel);
+  return [...filtered].sort((a, b) => {
     const ratioA = maxSumOf(a) > 0 ? scoreSumOf(a) / maxSumOf(a) : 0;
     const ratioB = maxSumOf(b) > 0 ? scoreSumOf(b) / maxSumOf(b) : 0;
     if (ratioB !== ratioA) return ratioB - ratioA;
@@ -287,14 +331,56 @@ function getSortedEmployees(){
   });
 }
 
+function renderLevelSwitcher(){
+  const wrap = document.getElementById("levelSwitcher");
+  if (!wrap) return;
+  wrap.innerHTML = "";
+  levels.forEach(lvl => {
+    const count = employees.filter(e => (e.level || "TM") === lvl.id).length;
+    const active = currentLevel === lvl.id;
+    const btn = document.createElement("button");
+    btn.className = "level-btn" + (active ? " active" : "");
+    btn.innerHTML = `${escapeHtml(lvl.name)} <span class="level-badge">${count}</span>`;
+    btn.onclick = () => {
+      currentLevel = lvl.id;
+      const url = new URL(window.location);
+      url.searchParams.set('level', currentLevel);
+      window.history.replaceState({}, '', url);
+
+      const sorted = getSortedEmployees();
+      selectedId = sorted.length > 0 ? sorted[0].id : null;
+      renderAll();
+    };
+    wrap.appendChild(btn);
+  });
+}
+
 async function init(){
+  const urlParams = new URLSearchParams(window.location.search);
+  const paramLevel = urlParams.get("level") || window.location.hash.replace('#', '');
+
   const fromJson = await loadFromDataJson();
-  if (fromJson && fromJson.length > 0) {
-    employees = fromJson;
+  if (fromJson && fromJson.employees.length > 0) {
+    levels = fromJson.levels;
+    employees = fromJson.employees;
   } else {
     const local = loadFromLocalStorage();
-    employees = local || normalizeEmployees(fallbackData);
+    if (local && local.employees.length > 0) {
+      levels = local.levels;
+      employees = local.employees;
+    } else {
+      const fallback = normalizeData(fallbackData);
+      levels = fallback.levels;
+      employees = fallback.employees;
+    }
   }
+
+  if (paramLevel && levels.some(l => l.id === paramLevel)) {
+    currentLevel = paramLevel;
+  } else if (levels.length > 0) {
+    currentLevel = levels[0].id;
+  }
+
   const sorted = getSortedEmployees();
   if (sorted.length > 0) {
     selectedId = sorted[0].id;
@@ -340,6 +426,10 @@ function renderSidebar(){
   const list = document.getElementById("empList");
   list.innerHTML = "";
   const sorted = getSortedEmployees();
+  if (sorted.length === 0) {
+    list.innerHTML = `<div class="empty-state">ไม่มีข้อมูลพนักงานในระดับนี้</div>`;
+    return;
+  }
   sorted.forEach((emp, idx) => {
     const active = emp.id === selectedId;
     const total100 = totalScore100Of(emp);
@@ -363,7 +453,13 @@ function renderSidebar(){
 
 function renderProfile(){
   const emp = getEmployee();
-  if (!emp) return;
+  if (!emp) {
+    document.getElementById("nameView").textContent = "-";
+    document.getElementById("posView").textContent = "";
+    document.getElementById("photoImg").classList.add("hidden");
+    document.getElementById("photoFallback").classList.remove("hidden");
+    return;
+  }
   document.getElementById("nameView").textContent = emp.name;
   document.getElementById("posView").textContent = emp.nickname ? `ชื่อเล่น "${emp.nickname}"` : "";
 
@@ -381,16 +477,22 @@ function renderProfile(){
 
 function renderChart(){
   const emp = getEmployee();
-  if (!emp) return;
+  const svg = document.getElementById("radarSvg");
+  if (!emp) {
+    document.getElementById("avgNum").textContent = `0/100`;
+    document.getElementById("levelLabel").textContent = "";
+    svg.innerHTML = "";
+    return;
+  }
   const scoreSum = scoreSumOf(emp);
   const maxSum = maxSumOf(emp);
   const total100 = totalScore100Of(emp);
   document.getElementById("avgNum").textContent = `${total100}/100`;
   document.getElementById("levelLabel").textContent = levelLabel(scoreSum, maxSum);
 
-  const svg = document.getElementById("radarSvg");
   const cx = 200, cy = 172, r = 122;
   const n = emp.competencies.length;
+  if (n === 0) { svg.innerHTML = ""; return; }
   const angleFor = i => (Math.PI * 2 * i / n) - Math.PI / 2;
 
   let s = "";
@@ -435,11 +537,11 @@ function renderChart(){
 }
 
 function renderCompetencies(){
+  const list = document.getElementById("compList");
+  list.innerHTML = "";
   const emp = getEmployee();
   if (!emp) return;
 
-  const list = document.getElementById("compList");
-  list.innerHTML = "";
   emp.competencies.forEach((c, idx) => {
     const card = document.createElement("div");
     card.className = "comp-card";
@@ -463,9 +565,13 @@ function renderCompetencies(){
 }
 
 function renderRemark(){
-  const emp = getEmployee();
-  if (!emp) return;
   const el = document.getElementById("remarkView");
+  const emp = getEmployee();
+  if (!emp) {
+    el.textContent = "ไม่มีพนักงานในระดับนี้";
+    el.classList.add("remark-empty");
+    return;
+  }
   if (emp.remark && emp.remark.trim() !== "") {
     el.textContent = emp.remark;
     el.classList.remove("remark-empty");
@@ -476,6 +582,7 @@ function renderRemark(){
 }
 
 function renderAll(){
+  renderLevelSwitcher();
   renderSidebar();
   renderProfile();
   renderChart();
